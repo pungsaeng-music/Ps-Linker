@@ -15,6 +15,10 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- Pretendard Web Font -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
+  
+  <!-- Supabase JS Client 라이브러리 추가 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <style>
     * {
       -webkit-tap-highlight-color: transparent;
@@ -43,6 +47,11 @@
   <div id="root"></div>
 
   <script type="text/babel">
+    // Supabase DB 연결 클라이언트 생성
+    const SUPABASE_URL = 'https://ovqyxyyhaarjuhdgtzgs.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_uCjOOq7kqh-FKvMJHtJ0Wg_jbmQzHtJ';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
     // Safe SVG Icon Helper
     const makeIcon = (path) => (props) => (
       <svg 
