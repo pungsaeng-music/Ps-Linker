@@ -47,24 +47,12 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    // Supabase DB 클라이언트 연결 설정
     const SUPABASE_URL = 'https://ovqyxyyhaarjuhdgtzgs.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_uCjOOq7kqh-FKvMJHtJ0Wg_jbmQzHtJ';
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // Safe SVG Icon Helper
     const makeIcon = (path) => (props) => (
-      <svg 
-        width={props.size || 18} 
-        height={props.size || 18} 
-        viewBox="0 0 24 24" 
-        fill="none" 
-        stroke="currentColor" 
-        strokeWidth="2" 
-        strokeLinecap="round" 
-        strokeLinejoin="round" 
-        className={props.className}
-      >
+      <svg width={props.size || 18} height={props.size || 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
         {path}
       </svg>
     );
@@ -294,7 +282,6 @@
     }
 
     function App() {
-      // Login & Auth State
       const [isLoggedIn, setIsLoggedIn] = useState(false);
       const [loginEmail, setLoginEmail] = useState('');
       const [verificationCode, setVerificationCode] = useState('');
@@ -307,7 +294,6 @@
       const [showWebmailModal, setShowWebmailModal] = useState(false);
       const [showLoginBetaModal, setShowLoginBetaModal] = useState(false);
 
-      // App Core State
       const [adminUserList, setAdminUserList] = useState(INITIAL_BETA_ACCOUNTS);
       const [currentUser, setCurrentUser] = useState(INITIAL_BETA_ACCOUNTS[1]);
       const [activeTab, setActiveTab] = useState('home');
@@ -317,17 +303,11 @@
       const [adminActiveSubTab, setAdminActiveSubTab] = useState('users');
       const [adminInspectedRoomId, setAdminInspectedRoomId] = useState(null);
 
-      // System Reports for Admin
       const [reports, setReports] = useState([]);
-
-      // Evaluation Log Tracking
       const [evaluationHistory, setEvaluationHistory] = useState({});
-
-      // Custom Confirm Modals
       const [userToDelete, setUserToDelete] = useState(null);
       const [roomToDelete, setRoomToDelete] = useState(null);
 
-      // Message Action Modal (Long Press 0.5s = 500ms)
       const [selectedMsgForAction, setSelectedMsgForAction] = useState(null);
       const [showMsgActionModal, setShowMsgActionModal] = useState(false);
       const [showEditMsgModal, setShowEditMsgModal] = useState(false);
@@ -335,14 +315,11 @@
       const [showReportMsgModal, setShowReportMsgModal] = useState(false);
       const [reportReason, setReportReason] = useState('인격모독 / 비하 발언');
 
-      // Data Collections (Supabase Sync 대상)
       const [rooms, setRooms] = useState(INITIAL_SEED_ROOMS);
       const [allMessages, setAllMessages] = useState(INITIAL_SEED_MESSAGES);
       const [lostItems, setLostItems] = useState(INITIAL_SEED_LOST_ITEMS);
 
-      // 🔄 SUPABASE 실시간 연동 (Realtime Sync) 설정
       useEffect(() => {
-        // 1. 초기 데이터 불러오기 (DB에서 rooms와 messages 가져오기)
         const fetchInitialData = async () => {
           const { data: dbRooms } = await supabase.from('rooms').select('*');
           if (dbRooms && dbRooms.length > 0) {
@@ -375,7 +352,6 @@
 
         fetchInitialData();
 
-        // 2. 실시간 구독 (다른 기기/사람이 보낸 메시지나 방을 카톡처럼 즉시 반영)
         const channel = supabase
           .channel('public:linker_sync')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
@@ -423,7 +399,6 @@
         };
       }, []);
 
-      // Modals State
       const [showBetaAccountModal, setShowBetaAccountModal] = useState(false);
       const [showCreateModal, setShowCreateModal] = useState(false);
       const [newRoomTitle, setNewRoomTitle] = useState('');
@@ -436,7 +411,6 @@
       const [showUserProfileModal, setShowUserProfileModal] = useState(false);
       const [targetProfileUser, setTargetProfileUser] = useState(null);
 
-      // Math Keyboard & Chat Inputs
       const [showMathKeyboard, setShowMathKeyboard] = useState(false);
       const [selectedMathCategory, setSelectedMathCategory] = useState('CALCULUS');
       const [chatInputText, setChatInputText] = useState('');
@@ -464,7 +438,6 @@
         return { isBanned: false, timeText: '' };
       };
 
-      // Handle Long Press Start (0.5s duration = 500ms)
       const handlePressStart = (msg) => {
         longPressTimerRef.current = setTimeout(() => {
           setSelectedMsgForAction(msg);
@@ -660,7 +633,6 @@
         triggerToast(`${isPositive ? '🌡️' : '❄️'} 매너 온도가 실시간 반영되었습니다! (${signText}℃ / 현재 ${newTemp}℃)`, isPositive ? 'success' : 'warning');
       };
 
-      // 🔄 Supabase DB 연동 메시지 전송
       const handleSendMessage = async (e) => {
         if (e) e.preventDefault();
         const textToSend = chatInputText.trim();
@@ -694,7 +666,6 @@
           is_system: false
         };
 
-        // 로컬 UI 즉시 반영
         setAllMessages(prev => [...prev, {
           id: newMsg.id,
           roomId: newMsg.room_id,
@@ -708,12 +679,10 @@
 
         setRooms(prev => prev.map(r => r.id === activeRoomId ? { ...r, lastMessageAt: now } : r));
 
-        // Supabase DB에 저장 (다른 기기와 실시간 동기화)
         await supabase.from('messages').insert([newMsg]);
         await supabase.from('rooms').update({ last_message_at: now }).eq('id', activeRoomId);
       };
 
-      // Message Edit / Delete Handlers (Time limit: 80 seconds = 1 min 20 sec)
       const handleEditMessage = () => {
         if (!selectedMsgForAction) return;
         const msgAgeMs = Date.now() - selectedMsgForAction.timestamp;
@@ -754,7 +723,6 @@
         setShowMsgActionModal(false);
       };
 
-      // Message Report Handler
       const handleReportMessageSubmit = (e) => {
         if (e) e.preventDefault();
         if (!selectedMsgForAction) return;
@@ -793,7 +761,6 @@
         }
       };
 
-      // 🔄 Supabase DB 연동 대화방 생성
       const handleCreateRoom = async (e) => {
         if (e) e.preventDefault();
         const titleTrimmed = newRoomTitle.trim();
@@ -836,7 +803,6 @@
           is_system: true
         };
 
-        // 로컬 UI 즉시 반영
         setRooms(prev => [{
           id: newRoom.id,
           title: newRoom.title,
@@ -865,7 +831,6 @@
         setActiveRoomId(roomId);
         triggerToast(`💬 '${cleanText}' 대화방이 개설되었습니다!`, 'success');
 
-        // Supabase DB에 저장
         await supabase.from('rooms').insert([newRoom]);
         await supabase.from('messages').insert([sysMsg]);
       };
@@ -939,7 +904,6 @@
         triggerToast(`🗑️ '${roomTitle}' 대화방이 즉시 강제 폐쇄되었습니다.`, 'danger');
         setRoomToDelete(null);
 
-        // Supabase DB에서도 삭제
         await supabase.from('rooms').delete().eq('id', roomId);
       };
 
@@ -1018,7 +982,6 @@
         return text;
       };
 
-      // LOGIN SCREEN
       if (!isLoggedIn) {
         return (
           <div className="min-h-screen bg-slate-900 text-slate-800 flex justify-center items-center font-sans antialiased p-4 ios-scroll">
@@ -1149,7 +1112,6 @@
 
             </div>
 
-            {/* BETA ACCOUNT SELECTION MODAL */}
             {showLoginBetaModal && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-slate-200">
@@ -1187,7 +1149,6 @@
               </div>
             )}
 
-            {/* Simulated Webmail Inbox Modal */}
             {showWebmailModal && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-slate-200">
@@ -1234,7 +1195,6 @@
         );
       }
 
-      // MAIN APP SCREEN
       return (
         <div className="min-h-screen bg-slate-100 text-slate-800 flex justify-center font-sans antialiased">
           <div className="w-full max-w-md bg-white min-h-screen flex flex-col shadow-2xl relative pb-24 border-x border-slate-200">
@@ -1278,7 +1238,6 @@
               </header>
             )}
 
-            {/* ACTIVE CHAT ROOM */}
             {activeRoomId ? (
               <div className="flex-1 flex flex-col bg-slate-50 relative h-screen pb-0">
                 <div className="bg-white border-b border-slate-200 p-3 flex items-center justify-between sticky top-0 z-20 shadow-sm">
@@ -1404,10 +1363,7 @@
                         <p className="text-[10px] text-slate-500 mt-1">첨부된 사진이 메시지와 함께 전송됩니다.</p>
                       </div>
                     </div>
-                    <button 
-                      onClick={() => setChatSelectedImage(null)}
-                      className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-full transition"
-                    >
+                    <button onClick={() => setChatSelectedImage(null)} className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-full transition">
                       <X className="w-4 h-4" />
                     </button>
                   </div>
@@ -1481,9 +1437,7 @@
                 </div>
               </div>
             ) : (
-              /* TAB CONTENTS */
               <div className="flex-1 p-4 space-y-5 overflow-y-auto ios-scroll">
-                {/* HOME TAB */}
                 {activeTab === 'home' && (
                   <div className="space-y-4">
                     <div className="bg-gradient-to-br from-teal-700 to-emerald-800 rounded-3xl p-5 text-white shadow-xl space-y-3 relative overflow-hidden">
@@ -1510,7 +1464,6 @@
                       </div>
                     </div>
 
-                    {/* Class Leaderboard */}
                     <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
@@ -1548,7 +1501,6 @@
                       </div>
                     </div>
 
-                    {/* Active Rooms */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <h3 className="font-extrabold text-sm text-slate-900">실시간 활성 대화방</h3>
@@ -1577,7 +1529,6 @@
                   </div>
                 )}
 
-                {/* CHATS TAB */}
                 {activeTab === 'chats' && (
                   <div className="space-y-3">
                     <div className="flex gap-2">
@@ -1598,18 +1549,9 @@
                     </div>
 
                     <div className="flex gap-1 overflow-x-auto pb-1 text-xs ios-scroll">
-                      <button 
-                        onClick={() => setSelectedCategory('ALL')} 
-                        className={`px-3 py-1.5 rounded-full font-bold whitespace-nowrap transition ${selectedCategory === 'ALL' ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-                      >
-                        전체
-                      </button>
+                      <button onClick={() => setSelectedCategory('ALL')} className={`px-3 py-1.5 rounded-full font-bold whitespace-nowrap transition ${selectedCategory === 'ALL' ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600'}`}>전체</button>
                       {Object.values(CATEGORIES).map(cat => (
-                        <button 
-                          key={cat.id} 
-                          onClick={() => setSelectedCategory(cat.id)} 
-                          className={`px-3 py-1.5 rounded-full font-bold whitespace-nowrap transition ${selectedCategory === cat.id ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-                        >
+                        <button key={cat.id} onClick={() => setSelectedCategory(cat.id)} className={`px-3 py-1.5 rounded-full font-bold whitespace-nowrap transition ${selectedCategory === cat.id ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
                           {cat.name}
                         </button>
                       ))}
@@ -1638,7 +1580,6 @@
                   </div>
                 )}
 
-                {/* LOST & FOUND TAB */}
                 {activeTab === 'lostfound' && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -1674,7 +1615,6 @@
                   </div>
                 )}
 
-                {/* WEE CLASS TAB */}
                 {activeTab === 'wee' && (
                   <div className="space-y-4">
                     <div className="bg-gradient-to-r from-rose-500 to-pink-600 rounded-3xl p-5 text-white space-y-3 shadow-lg">
@@ -1690,7 +1630,6 @@
                   </div>
                 )}
 
-                {/* MY PAGE TAB */}
                 {activeTab === 'mypage' && (
                   <div className="space-y-4">
                     <div className="p-5 bg-white rounded-3xl border border-slate-200 space-y-4 shadow-sm">
@@ -1726,7 +1665,6 @@
                   </div>
                 )}
 
-                {/* ADMIN DASHBOARD TAB */}
                 {activeTab === 'admin' && currentUser.isAdmin && (
                   <div className="space-y-4">
                     <div className="bg-slate-900 rounded-3xl p-5 text-white space-y-3 shadow-xl border border-slate-800">
@@ -1741,7 +1679,6 @@
                       </div>
                     </div>
 
-                    {/* SUB-TAB 1: USER MANAGEMENT */}
                     {adminActiveSubTab === 'users' && (
                       <div className="space-y-2.5">
                         {adminUserList.map(u => (
@@ -1765,10 +1702,7 @@
                                 <button onClick={() => handleAdminBanUser(u.id, 72)} className="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-900 rounded font-bold transition">+3일 차단</button>
                                 <button onClick={() => handleAdminBanUser(u.id, 0)} className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded font-bold transition">차단 해제</button>
                               </div>
-                              <button 
-                                onClick={() => setUserToDelete(u)} 
-                                className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded font-bold flex items-center gap-1 shadow-sm transition"
-                              >
+                              <button onClick={() => setUserToDelete(u)} className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded font-bold flex items-center gap-1 shadow-sm transition">
                                 <Trash2 className="w-3 h-3" />
                                 <span>강제 삭제</span>
                               </button>
@@ -1778,7 +1712,6 @@
                       </div>
                     )}
 
-                    {/* SUB-TAB 2: ROOM MONITORING */}
                     {adminActiveSubTab === 'rooms' && (
                       <div className="space-y-3">
                         <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 font-bold leading-relaxed">
@@ -1871,12 +1804,7 @@
                                               </span>
                                               <span className="text-slate-600 ml-1">{m.text}</span>
                                             </div>
-                                            <button 
-                                              onClick={() => handleAdminDeleteMessage(m.id)}
-                                              className="text-[10px] text-rose-600 font-bold hover:underline shrink-0 ml-2"
-                                            >
-                                              삭제
-                                            </button>
+                                            <button onClick={() => handleAdminDeleteMessage(m.id)} className="text-[10px] text-rose-600 font-bold hover:underline shrink-0 ml-2">삭제</button>
                                           </div>
                                         );
                                       })
@@ -1890,7 +1818,6 @@
                       </div>
                     )}
 
-                    {/* SUB-TAB 3: REPORTS DASHBOARD */}
                     {adminActiveSubTab === 'reports' && (
                       <div className="space-y-3">
                         <div className="p-3 bg-rose-50 rounded-2xl border border-rose-200 text-xs text-rose-900 font-bold leading-relaxed flex items-center gap-2">
@@ -1989,7 +1916,6 @@
               </div>
             )}
 
-            {/* MOBILE BOTTOM NAV BAR */}
             {!activeRoomId && (
               <nav className="fixed bottom-3 left-1/2 -translate-x-1/2 w-[calc(100%-1.5rem)] max-w-md bg-white/95 backdrop-blur-md border border-slate-200/80 rounded-2xl py-2.5 px-3 flex items-center justify-around z-30 shadow-2xl">
                 <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${activeTab === 'home' ? 'text-teal-600 font-extrabold' : 'text-slate-400'}`}><Home className="w-5 h-5" /><span>홈</span></button>
@@ -2003,7 +1929,6 @@
               </nav>
             )}
 
-            {/* MODAL: MESSAGE LONG PRESS ACTION */}
             {showMsgActionModal && selectedMsgForAction && (() => {
               const isMyMsg = selectedMsgForAction.sender === currentUser.nickname || selectedMsgForAction.senderEmail === currentUser.email;
               const msgAgeMs = Date.now() - selectedMsgForAction.timestamp;
@@ -2075,7 +2000,6 @@
               );
             })()}
 
-            {/* MODAL: EDIT MESSAGE INPUT */}
             {showEditMsgModal && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-slate-200">
@@ -2100,7 +2024,6 @@
               </div>
             )}
 
-            {/* MODAL: REPORT MESSAGE SUBMIT */}
             {showReportMsgModal && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-rose-200">
@@ -2141,7 +2064,6 @@
               </div>
             )}
 
-            {/* MODAL: CUSTOM CONFIRMATION FOR USER DELETE */}
             {userToDelete && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-rose-100">
@@ -2161,7 +2083,6 @@
               </div>
             )}
 
-            {/* MODAL: CUSTOM CONFIRMATION FOR ROOM CLOSE */}
             {roomToDelete && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-rose-100">
@@ -2181,7 +2102,6 @@
               </div>
             )}
 
-            {/* MODAL: CREATE ROOM */}
             {showCreateModal && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
@@ -2227,7 +2147,6 @@
               </div>
             )}
 
-            {/* MODAL: LOST ITEM POST */}
             {showLostPostModal && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
@@ -2271,7 +2190,6 @@
               </div>
             )}
 
-            {/* MODAL: USER PROFILE & MANNER RATING */}
             {showUserProfileModal && targetProfileUser && (() => {
               const evalKey = `${currentUser.email}_${targetProfileUser.email || targetProfileUser.nickname}`;
               const lastEvalTime = evaluationHistory[evalKey];
@@ -2345,7 +2263,6 @@
               );
             })()}
 
-            {/* MODAL: BETA ACCOUNT SWITCHER */}
             {showBetaAccountModal && (
               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
