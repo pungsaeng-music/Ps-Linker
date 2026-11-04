@@ -48,7 +48,7 @@
 
   <script type="text/babel">
     const SUPABASE_URL = 'https://ovqyxyyhaarjuhdgtzgs.supabase.co';
-    const SUPABASE_ANON_KEY = 'sb_publishable_uCjOOq7kqh-FKvMJHtJ0Wg_jbmQzHtJ';
+    const SUPABASE_ANON_KEY = 'Sb_publishable_uCjOOq7kqh-FKvMJHtJ0Wg_jbmQzHtJ';
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const makeIcon = (path) => (props) => (
@@ -282,7 +282,6 @@
     }
 
     function App() {
-      // 로컬 스토리지에서 로그인 세션과 유저 정보를 안전하게 불러오기
       const [currentUser, setCurrentUser] = useState(() => {
         const saved = localStorage.getItem('ps_current_user');
         if (saved) {
@@ -330,7 +329,6 @@
       const [allMessages, setAllMessages] = useState(INITIAL_SEED_MESSAGES);
       const [lostItems, setLostItems] = useState(INITIAL_SEED_LOST_ITEMS);
 
-      // 로그인 상태 변경 시 로컬스토리지 동기화
       useEffect(() => {
         if (isLoggedIn && currentUser) {
           localStorage.setItem('ps_is_logged_in', 'true');
@@ -341,7 +339,6 @@
         }
       }, [isLoggedIn, currentUser]);
 
-      // Supabase 실시간 연동 (방 및 메시지)
       useEffect(() => {
         const fetchInitialData = async () => {
           const { data: dbRooms } = await supabase.from('rooms').select('*');
