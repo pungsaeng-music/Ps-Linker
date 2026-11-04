@@ -282,7 +282,19 @@
     }
 
     function App() {
-      const [isLoggedIn, setIsLoggedIn] = useState(false);
+      // 로컬 스토리지에서 로그인 세션과 유저 정보를 안전하게 불러오기
+      const [currentUser, setCurrentUser] = useState(() => {
+        const saved = localStorage.getItem('ps_current_user');
+        if (saved) {
+          try { return JSON.parse(saved); } catch (e) { return INITIAL_BETA_ACCOUNTS[1]; }
+        }
+        return INITIAL_BETA_ACCOUNTS[1];
+      });
+
+      const [isLoggedIn, setIsLoggedIn] = useState(() => {
+        return localStorage.getItem('ps_is_logged_in') === 'true';
+      });
+
       const [loginEmail, setLoginEmail] = useState('');
       const [verificationCode, setVerificationCode] = useState('');
       const [sentCode, setSentCode] = useState(null);
@@ -295,7 +307,6 @@
       const [showLoginBetaModal, setShowLoginBetaModal] = useState(false);
 
       const [adminUserList, setAdminUserList] = useState(INITIAL_BETA_ACCOUNTS);
-      const [currentUser, setCurrentUser] = useState(INITIAL_BETA_ACCOUNTS[1]);
       const [activeTab, setActiveTab] = useState('home');
       const [selectedCategory, setSelectedCategory] = useState('ALL');
       const [searchQuery, setSearchQuery] = useState('');
@@ -319,6 +330,18 @@
       const [allMessages, setAllMessages] = useState(INITIAL_SEED_MESSAGES);
       const [lostItems, setLostItems] = useState(INITIAL_SEED_LOST_ITEMS);
 
+      // 로그인 상태 변경 시 로컬스토리지 동기화
+      useEffect(() => {
+        if (isLoggedIn && currentUser) {
+          localStorage.setItem('ps_is_logged_in', 'true');
+          localStorage.setItem('ps_current_user', JSON.stringify(currentUser));
+        } else {
+          localStorage.removeItem('ps_is_logged_in');
+          localStorage.removeItem('ps_current_user');
+        }
+      }, [isLoggedIn, currentUser]);
+
+      // Supabase 실시간 연동 (방 및 메시지)
       useEffect(() => {
         const fetchInitialData = async () => {
           const { data: dbRooms } = await supabase.from('rooms').select('*');
@@ -353,7 +376,7 @@
         fetchInitialData();
 
         const channel = supabase
-          .channel('public:linker_sync')
+          .channel('public:linker_sync_v2')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
             if (payload.eventType === 'INSERT') {
               const m = payload.new;
@@ -656,7 +679,7 @@
 
         const now = Date.now();
         const newMsg = {
-          id: `m-${now}`,
+          id: `m-${now}-${Math.random().toString(36).substr(2, 4)}`,
           room_id: activeRoomId,
           sender: currentUser.nickname,
           sender_email: currentUser.email,
@@ -1650,6 +1673,7 @@
                       <button 
                         onClick={() => {
                           setIsLoggedIn(false);
+                          setCurrentUser(null);
                           setAuthStep(1);
                           setLoginEmail('');
                           setVerificationCode('');
@@ -1922,7 +1946,7 @@
                 <button onClick={() => setActiveTab('chats')} className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${activeTab === 'chats' ? 'text-teal-600 font-extrabold' : 'text-slate-400'}`}><MessageSquare className="w-5 h-5" /><span>대화방</span></button>
                 <button onClick={() => setActiveTab('lostfound')} className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${activeTab === 'lostfound' ? 'text-teal-600 font-extrabold' : 'text-slate-400'}`}><SearchCode className="w-5 h-5" /><span>분실물</span></button>
                 <button onClick={() => setActiveTab('wee')} className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${activeTab === 'wee' ? 'text-rose-600 font-extrabold' : 'text-slate-400'}`}><Phone className="w-5 h-5" /><span>Wee클래스</span></button>
-                {currentUser.isAdmin && (
+                {currentUser?.isAdmin && (
                   <button onClick={() => setActiveTab('admin')} className={`flex flex-col items-center gap-0.5 text-[10px] font-black ${activeTab === 'admin' ? 'text-amber-600' : 'text-slate-400'}`}><ShieldCheck className="w-5 h-5" /><span>관리자</span></button>
                 )}
                 <button onClick={() => setActiveTab('mypage')} className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${activeTab === 'mypage' ? 'text-teal-600 font-extrabold' : 'text-slate-400'}`}><User className="w-5 h-5" /><span>마이</span></button>
@@ -2276,6 +2300,7 @@
                         key={acc.id} 
                         onClick={() => {
                           setCurrentUser(acc);
+                          setIsLoggedIn(true);
                           setShowBetaAccountModal(false);
                           if (acc.isAdmin) setActiveTab('admin');
                           else setActiveTab('home');
