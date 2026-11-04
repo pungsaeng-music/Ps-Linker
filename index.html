@@ -341,8 +341,8 @@
 
       useEffect(() => {
         const fetchInitialData = async () => {
-          const { data: dbRooms } = await supabase.from('rooms').select('*');
-          if (dbRooms && dbRooms.length > 0) {
+          const { data: dbRooms, error: roomErr } = await supabase.from('rooms').select('*');
+          if (!roomErr && dbRooms && dbRooms.length > 0) {
             setRooms(dbRooms.map(r => ({
               id: r.id,
               title: r.title,
@@ -355,8 +355,8 @@
             })));
           }
 
-          const { data: dbMsgs } = await supabase.from('messages').select('*').order('timestamp', { ascending: true });
-          if (dbMsgs && dbMsgs.length > 0) {
+          const { data: dbMsgs, error: msgErr } = await supabase.from('messages').select('*').order('timestamp', { ascending: true });
+          if (!msgErr && dbMsgs && dbMsgs.length > 0) {
             setAllMessages(dbMsgs.map(m => ({
               id: m.id,
               roomId: m.room_id,
@@ -373,7 +373,7 @@
         fetchInitialData();
 
         const channel = supabase
-          .channel('public:linker_sync_v2')
+          .channel('public:linker_sync_v3')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
             if (payload.eventType === 'INSERT') {
               const m = payload.new;
@@ -699,8 +699,15 @@
 
         setRooms(prev => prev.map(r => r.id === activeRoomId ? { ...r, lastMessageAt: now } : r));
 
-        await supabase.from('messages').insert([newMsg]);
-        await supabase.from('rooms').update({ last_message_at: now }).eq('id', activeRoomId);
+        const { error: msgInsertErr } = await supabase.from('messages').insert([newMsg]);
+        if (msgInsertErr) {
+          triggerToast(`🚨 메시지 DB 저장 실패: ${msgInsertErr.message}`, 'danger');
+        }
+
+        const { error: roomUpdateErr } = await supabase.from('rooms').update({ last_message_at: now }).eq('id', activeRoomId);
+        if (roomUpdateErr) {
+          console.error("Room update error:", roomUpdateErr.message);
+        }
       };
 
       const handleEditMessage = () => {
@@ -851,8 +858,15 @@
         setActiveRoomId(roomId);
         triggerToast(`💬 '${cleanText}' 대화방이 개설되었습니다!`, 'success');
 
-        await supabase.from('rooms').insert([newRoom]);
-        await supabase.from('messages').insert([sysMsg]);
+        const { error: roomErr } = await supabase.from('rooms').insert([newRoom]);
+        if (roomErr) {
+          triggerToast(`🚨 방 개설 DB 저장 실패: ${roomErr.message}`, 'danger');
+        }
+
+        const { error: msgErr } = await supabase.from('messages').insert([sysMsg]);
+        if (msgErr) {
+          console.error("System message DB insert error:", msgErr.message);
+        }
       };
 
       const handleCreateLostItem = (e) => {
