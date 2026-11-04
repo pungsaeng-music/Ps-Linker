@@ -16,7 +16,7 @@
   <!-- Pretendard Web Font -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
   
-  <!-- Supabase JS Client 라이브러리 추가 -->
+  <!-- Supabase JS Client 라이브러리 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <style>
@@ -47,7 +47,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    // Supabase DB 연결 클라이언트 생성
+    // Supabase DB 클라이언트 연결 설정
     const SUPABASE_URL = 'https://ovqyxyyhaarjuhdgtzgs.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_uCjOOq7kqh-FKvMJHtJ0Wg_jbmQzHtJ';
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -335,10 +335,93 @@
       const [showReportMsgModal, setShowReportMsgModal] = useState(false);
       const [reportReason, setReportReason] = useState('인격모독 / 비하 발언');
 
-      // Data Collections
+      // Data Collections (Supabase Sync 대상)
       const [rooms, setRooms] = useState(INITIAL_SEED_ROOMS);
       const [allMessages, setAllMessages] = useState(INITIAL_SEED_MESSAGES);
       const [lostItems, setLostItems] = useState(INITIAL_SEED_LOST_ITEMS);
+
+      // 🔄 SUPABASE 실시간 연동 (Realtime Sync) 설정
+      useEffect(() => {
+        // 1. 초기 데이터 불러오기 (DB에서 rooms와 messages 가져오기)
+        const fetchInitialData = async () => {
+          const { data: dbRooms } = await supabase.from('rooms').select('*');
+          if (dbRooms && dbRooms.length > 0) {
+            setRooms(dbRooms.map(r => ({
+              id: r.id,
+              title: r.title,
+              category: r.category,
+              creator: r.creator,
+              creatorEmail: r.creator_email,
+              image: r.image,
+              createdAt: Number(r.created_at),
+              lastMessageAt: Number(r.last_message_at)
+            })));
+          }
+
+          const { data: dbMsgs } = await supabase.from('messages').select('*').order('timestamp', { ascending: true });
+          if (dbMsgs && dbMsgs.length > 0) {
+            setAllMessages(dbMsgs.map(m => ({
+              id: m.id,
+              roomId: m.room_id,
+              sender: m.sender,
+              senderEmail: m.sender_email,
+              text: m.text,
+              image: m.image,
+              timestamp: Number(m.timestamp),
+              isSystem: m.is_system
+            })));
+          }
+        };
+
+        fetchInitialData();
+
+        // 2. 실시간 구독 (다른 기기/사람이 보낸 메시지나 방을 카톡처럼 즉시 반영)
+        const channel = supabase
+          .channel('public:linker_sync')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
+            if (payload.eventType === 'INSERT') {
+              const m = payload.new;
+              const formattedMsg = {
+                id: m.id,
+                roomId: m.room_id,
+                sender: m.sender,
+                senderEmail: m.sender_email,
+                text: m.text,
+                image: m.image,
+                timestamp: Number(m.timestamp),
+                isSystem: m.is_system
+              };
+              setAllMessages(prev => {
+                if (prev.some(item => item.id === formattedMsg.id)) return prev;
+                return [...prev, formattedMsg];
+              });
+            }
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, (payload) => {
+            if (payload.eventType === 'INSERT') {
+              const r = payload.new;
+              const formattedRoom = {
+                id: r.id,
+                title: r.title,
+                category: r.category,
+                creator: r.creator,
+                creatorEmail: r.creator_email,
+                image: r.image,
+                createdAt: Number(r.created_at),
+                lastMessageAt: Number(r.last_message_at)
+              };
+              setRooms(prev => {
+                if (prev.some(item => item.id === formattedRoom.id)) return prev;
+                return [formattedRoom, ...prev];
+              });
+            }
+          })
+          .subscribe();
+
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      }, []);
 
       // Modals State
       const [showBetaAccountModal, setShowBetaAccountModal] = useState(false);
@@ -577,7 +660,8 @@
         triggerToast(`${isPositive ? '🌡️' : '❄️'} 매너 온도가 실시간 반영되었습니다! (${signText}℃ / 현재 ${newTemp}℃)`, isPositive ? 'success' : 'warning');
       };
 
-      const handleSendMessage = (e) => {
+      // 🔄 Supabase DB 연동 메시지 전송
+      const handleSendMessage = async (e) => {
         if (e) e.preventDefault();
         const textToSend = chatInputText.trim();
         if ((!textToSend && !chatSelectedImage) || !activeRoomId) return;
@@ -601,17 +685,32 @@
         const now = Date.now();
         const newMsg = {
           id: `m-${now}`,
-          roomId: activeRoomId,
+          room_id: activeRoomId,
           sender: currentUser.nickname,
-          senderEmail: currentUser.email,
+          sender_email: currentUser.email,
           text: cleanText,
           image: imageToSend || null,
           timestamp: now,
-          isSystem: false
+          is_system: false
         };
 
-        setAllMessages(prev => [...prev, newMsg]);
+        // 로컬 UI 즉시 반영
+        setAllMessages(prev => [...prev, {
+          id: newMsg.id,
+          roomId: newMsg.room_id,
+          sender: newMsg.sender,
+          senderEmail: newMsg.sender_email,
+          text: newMsg.text,
+          image: newMsg.image,
+          timestamp: newMsg.timestamp,
+          isSystem: newMsg.is_system
+        }]);
+
         setRooms(prev => prev.map(r => r.id === activeRoomId ? { ...r, lastMessageAt: now } : r));
+
+        // Supabase DB에 저장 (다른 기기와 실시간 동기화)
+        await supabase.from('messages').insert([newMsg]);
+        await supabase.from('rooms').update({ last_message_at: now }).eq('id', activeRoomId);
       };
 
       // Message Edit / Delete Handlers (Time limit: 80 seconds = 1 min 20 sec)
@@ -694,7 +793,8 @@
         }
       };
 
-      const handleCreateRoom = (e) => {
+      // 🔄 Supabase DB 연동 대화방 생성
+      const handleCreateRoom = async (e) => {
         if (e) e.preventDefault();
         const titleTrimmed = newRoomTitle.trim();
         if (!titleTrimmed) return;
@@ -719,29 +819,55 @@
           title: cleanText,
           category: newRoomCategory,
           creator: currentUser.nickname,
-          creatorEmail: currentUser.email,
-          membersCount: 1,
-          lastMessageAt: now,
-          createdAt: now,
-          image: newRoomImage || null
+          creator_email: currentUser.email,
+          image: newRoomImage || null,
+          created_at: now,
+          last_message_at: now
         };
 
         const sysMsg = {
           id: `m-${now}`,
-          roomId: roomId,
+          room_id: roomId,
           sender: '시스템',
+          sender_email: 'system@ps.hs.kr',
           text: `🎉 '${cleanText}' 대화방이 개설되었습니다.`,
+          image: null,
           timestamp: now,
-          isSystem: true
+          is_system: true
         };
 
-        setRooms(prev => [newRoom, ...prev]);
-        setAllMessages(prev => [...prev, sysMsg]);
+        // 로컬 UI 즉시 반영
+        setRooms(prev => [{
+          id: newRoom.id,
+          title: newRoom.title,
+          category: newRoom.category,
+          creator: newRoom.creator,
+          creatorEmail: newRoom.creator_email,
+          image: newRoom.image,
+          createdAt: newRoom.created_at,
+          lastMessageAt: newRoom.last_message_at
+        }, ...prev]);
+
+        setAllMessages(prev => [...prev, {
+          id: sysMsg.id,
+          roomId: sysMsg.room_id,
+          sender: sysMsg.sender,
+          senderEmail: sysMsg.sender_email,
+          text: sysMsg.text,
+          image: sysMsg.image,
+          timestamp: sysMsg.timestamp,
+          isSystem: sysMsg.is_system
+        }]);
+
         setNewRoomTitle('');
         setNewRoomImage(null);
         setShowCreateModal(false);
         setActiveRoomId(roomId);
         triggerToast(`💬 '${cleanText}' 대화방이 개설되었습니다!`, 'success');
+
+        // Supabase DB에 저장
+        await supabase.from('rooms').insert([newRoom]);
+        await supabase.from('messages').insert([sysMsg]);
       };
 
       const handleCreateLostItem = (e) => {
@@ -798,7 +924,7 @@
         setUserToDelete(null);
       };
 
-      const confirmForceCloseRoom = () => {
+      const confirmForceCloseRoom = async () => {
         if (!roomToDelete) return;
         const roomId = roomToDelete.id;
         const roomTitle = roomToDelete.title;
@@ -812,6 +938,9 @@
 
         triggerToast(`🗑️ '${roomTitle}' 대화방이 즉시 강제 폐쇄되었습니다.`, 'danger');
         setRoomToDelete(null);
+
+        // Supabase DB에서도 삭제
+        await supabase.from('rooms').delete().eq('id', roomId);
       };
 
       const handleAdminDeleteMessage = (msgId) => {
@@ -2259,4 +2388,4 @@
     root.render(<App />);
   </script>
 </body>
-</html>
+  </html>
