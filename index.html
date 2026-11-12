@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>위클래스(Wee Class) 마음톡 - 교내 상담 신청 및 1:1 실시간 대화</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Fonts: Inter & Pretendard -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            beige: {
+              50: '#FCFBF8',
+              100: '#F7F3EB',
+              200: '#EDE5D5',
+              300: '#DFD2B8',
+            },
+            mint: {
+              50: '#F0FDFA',
+              100: '#CCFBF1',
+              200: '#99F6E4',
+              500: '#14B8A6',
+              600: '#0D9488',
+              700: '#0F766E',
+              800: '#115E59',
+            }
+          },
+          fontFamily: {
+            sans: ['Pretendard', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      font-family: 'Pretendard', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background-color: #F7F3EB;
+      color: #1E293B;
+      margin: 0;
+      padding: 0;
+    }
+    .ios-scroll {
+      -webkit-overflow-scrolling: touch;
+    }
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #CBD5E1;
+      border-radius: 9999px;
+    }
+  </style>
+
+  <!-- Firebase v11.6.1 Modular SDK Bridge -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, updateDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'wee-class-counseling-app';
+    let db = null;
+    let auth = null;
+    let currentAuthUser = null;
+    let isReady = false;
+    const readyCallbacks = [];
+
+    const notifyReady = () => {
+      isReady = true;
+      readyCallbacks.forEach((cb) => {
+        try { cb({ db, auth, user: currentAuthUser, appId }); } catch (e) { console.error(e); }
+      });
+    };
+
+    (async function initFirebase() {
+      try {
+        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+          const firebaseConfig = typeof __firebase_config === 'string'
+            ? JSON.parse(__firebase_config)
+            : __firebase_config;
+
+          const app = initializeApp(firebaseConfig);
+          auth = getAuth(app);
+          db = getFirestore(app);
+
+          // RULE 3: Authenticate FIRST before any Firestore operations
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+
+          onAuthStateChanged(auth, (user) => {
+            currentAuthUser = user;
+            if (user && !isReady) {
+              notifyReady();
+            }
+          });
+        } else {
+          // Fallback when opened standalone outside sandbox
+          notifyReady();
+        }
+      } catch (err) {
+        console.error("Firebase 초기화 중 오류:", err);
+        notifyReady();
+      }
+    })();
+
+    window.__WEE_CLOUD__ = {
+      onReady(cb) {
+        if (isReady) {
+          cb({ db, auth, user: currentAuthUser, appId });
+        } else {
+          readyCallbacks.push(cb);
+        }
+      },
+      // RULE 1 & RULE 2: Strict /artifacts/{appId}/public/data/{collectionName} & simple collection() query
+      subscribeRequests(onData, onErr) {
+        if (!db || !currentAuthUser) return () => {};
+        const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'wee_requests');
+        return onSnapshot(
+          colRef,
+          (snapshot) => {
+            const list = [];
+            snapshot.forEach((docSnap) => {
+              list.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            onData(list);
+          },
+          (error) => {
+            console.error("wee_requests 구독 오류:", error);
+            if (onErr) onErr(error);
+          }
+        );
+      },
+      subscribeMessages(onData, onErr) {
+        if (!db || !currentAuthUser) return () => {};
+        const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'wee_messages');
+        return onSnapshot(
+          colRef,
+          (snapshot) => {
+            const list = [];
+            snapshot.forEach((docSnap) => {
+              list.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            onData(list);
+          },
+          (error) => {
+            console.error("wee_messages 구독 오류:", error);
+            if (onErr) onErr(error);
+          }
+        );
+      },
+      async saveRequest(requestObj) {
+        if (!db || !currentAuthUser) return false;
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'wee_requests', requestObj.id);
+        await setDoc(docRef, requestObj);
+        return true;
+      },
+      async updateRequest(requestId, updates) {
+        if (!db || !currentAuthUser) return false;
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'wee_requests', requestId);
+        await updateDoc(docRef, updates);
+        return true;
+      },
+      async saveMessage(messageObj) {
+        if (!db || !currentAuthUser) return false;
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'wee_messages', messageObj.id);
+        await setDoc(docRef, messageObj);
+        return true;
+      },
+      async deleteRequest(requestId) {
+        if (!db || !currentAuthUser) return false;
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'wee_requests', requestId);
+        await deleteDoc(docRef);
+        return true;
+      }
+    };
+  </script>
+
+  <!-- React 18 & Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-beige-100 text-slate-800 antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // SVG 아이콘 헬퍼
+    const makeIcon = (children) => ({ className = "w-5 h-5" }) => (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+      >
+        {children}
+      </svg>
+    );
+
+    const HeartHandshake = makeIcon(
+      <>
+        <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+        <path d="M12 5 9.04 7.96a2.17 2.17 0 0 0 0 3.08v0c.82.82 2.13.85 3 .07l2.07-1.9a2.82 2.82 0 0 1 3.79 0l2.96 2.66" />
+        <path d="m18 15-2-2" />
+        <path d="m15 18-2-2" />
+      </>
+    );
+    const UserIcon = makeIcon(
+      <>
+        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+        <circle cx="12" cy="7" r="4" />
+      </>
+    );
+    const GraduationCap = makeIcon(
+      <>
+        <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+        <path d="M22 10v6" />
+        <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+      </>
+    );
+    const ShieldCheck = makeIcon(
+      <>
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="m9 12 2 2 4-4" />
+      </>
+    );
+    const Phone = makeIcon(
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+    );
+    const MessageCircle = makeIcon(
+      <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+    );
+    const Send = makeIcon(
+      <>
+        <path d="m22 2-7 20-4-9-9-4Z" />
+        <path d="M22 2 11 13" />
+      </>
+    );
+    const Clock = makeIcon(
+      <>
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </>
+    );
+    const Calendar = makeIcon(
+      <>
+        <rect width="18" height="18" x="3" y="4" rx="2" />
+        <path d="M16 2v4" />
+        <path d="M8 2v4" />
+        <path d="M3 10h18" />
+      </>
+    );
+    const CheckCircle2 = makeIcon(
+      <>
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
+      </>
+    );
+    const ArrowLeft = makeIcon(
+      <>
+        <path d="m12 19-7-7 7-7" />
+        <path d="M19 12H5" />
+      </>
+    );
+    const RefreshCw = makeIcon(
+      <>
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </>
+    );
+    const Copy = makeIcon(
+      <>
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </>
+    );
+    const Sparkles = makeIcon(
+      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+    );
+    const X = makeIcon(
+      <>
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </>
+    );
+    const Lock = makeIcon(
+      <>
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </>
+    );
+
+    const COUNSELING_CATEGORIES = [
+      { id: '교우관계', label: '교우관계', emoji: '🤝', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+      { id: '학업/진로', label: '학업/진로', emoji: '📚', color: 'bg-sky-50 text-sky-700 border-sky-200' },
+      { id: '가족/가정', label: '가족/가정', emoji: '🏡', color: 'bg-amber-50 text-amber-800 border-amber-200' },
+      { id: '정서/마음', label: '정서/마음', emoji: '💚', color: 'bg-teal-50 text-teal-800 border-teal-200' },
+      { id: '기타', label: '기타', emoji: '✉️', color: 'bg-stone-100 text-stone-700 border-stone-200' }
+    ];
+
+    const STUDENT_QUICK_REPLIES = [
+      '안녕하세요 선생님, 상담 수락해 주셔서 감사합니다!',
+      '지금 잠깐 1:1 대화 가능할까요?',
+      '점심시간이나 방과후에 위클래스 방문해도 될까요?'
+    ];
+
+    const TEACHER_QUICK_REPLIES = [
+      '안녕하세요! 편안한 마음으로 이야기 들려주세요 🌿',
+      '네, 지금 대화 가능해요. 어떤 점이 가장 고민인가요?',
+      '언제든 위클래스 상담실 문 두드려 주세요 😊'
+    ];
+
+    // 전화번호 자동 하이픈 포맷터
+    function formatPhoneNumber(raw) {
+      const digits = String(raw || '').replace(/\D/g, '').slice(0, 11);
+      if (digits.length < 4) return digits;
+      if (digits.length < 8) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+      return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+    }
+
+    // iframe 호환 클립보드 복사 함수
+    function copyTextFallback(text) {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return ok;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function getTodayDateString() {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function App() {
+      // 클라우드 동기화 상태
+      const [cloudConnected, setCloudConnected] = useState(false);
+
+      // 로그인 및 계정 역할 상태 ('none' | 'student' | 'teacher')
+      const [role, setRole] = useState('none');
+      const [loginTab, setLoginTab] = useState('student'); // 초기 화면 선택 탭
+
+      // 학생 계정 정보
+      const [studentProfile, setStudentProfile] = useState({
+        name: '',
+        studentId: '',
+        phone: ''
+      });
+
+      // 위클래스 선생님 계정 정보
+      const [teacherProfile, setTeacherProfile] = useState({
+        name: '김민지 위클래스 선생님'
+      });
+
+      // 역할 전환 모달 상태
+      const [showRoleSwitchModal, setShowRoleSwitchModal] = useState(false);
+      const [switchTab, setSwitchTab] = useState('student');
+      const [switchStudentForm, setSwitchStudentForm] = useState({
+        name: '김하늘',
+        studentId: '2학년 3반 15번',
+        phone: '010-1234-5678'
+      });
+      const [switchTeacherName, setSwitchTeacherName] = useState('김민지 위클래스 선생님');
+
+      // 상담 신청 목록 & 1:1 메시지 목록 (Firebase 실시간 동기화 + 로컬 메모리 백업)
+      const [requests, setRequests] = useState([]);
+      const [messages, setMessages] = useState([]);
+
+      // 학생 화면 탭 ('apply' | 'list')
+      const [studentActiveTab, setStudentActiveTab] = useState('apply');
+
+      // 학생 상담 신청 폼 상태
+      const [applyForm, setApplyForm] = useState({
+        studentName: '',
+        studentId: '',
+        phone: '',
+        category: '정서/마음',
+        preferredDate: getTodayDateString(),
+        preferredTime: '점심시간 (12:40 ~ 13:20)',
+        content: ''
+      });
+      const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+
+      // 선생님 화면 필터 상태 ('ALL' | 'PENDING' | 'ACCEPTED' | 'COMPLETED')
+      const [teacherFilter, setTeacherFilter] = useState('ALL');
+      const [holdNoteModalReq, setHoldNoteModalReq] = useState(null);
+      const [holdNoteText, setHoldNoteText] = useState('');
+
+      // 1:1 실시간 채팅방 상태
+      const [activeChatRequestId, setActiveChatRequestId] = useState(null);
+      const [chatInput, setChatInput] = useState('');
+      const isComposingRef = useRef(false);
+      const messagesEndRef = useRef(null);
+
+      // 토스트 알림
+      const [toast, setToast] = useState(null);
+      const showToast = (text, type = 'mint') => {
+        setToast({ text, type });
+        setTimeout(() => setToast(null), 3200);
+      };
+
+      // Firebase Firestore 실시간 구독 연결
+      useEffect(() => {
+        let unsubReq = () => {};
+        let unsubMsg = () => {};
+
+        if (window.__WEE_CLOUD__) {
+          window.__WEE_CLOUD__.onReady(({ db, user }) => {
+            if (db && user) {
+              setCloudConnected(true);
+              unsubReq = window.__WEE_CLOUD__.subscribeRequests((list) => {
+                const sorted = [...list].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                setRequests(sorted);
+              });
+              unsubMsg = window.__WEE_CLOUD__.subscribeMessages((list) => {
+                const sorted = [...list].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                setMessages(sorted);
+              });
+            } else {
+              setCloudConnected(false);
+            }
+          });
+        }
+
+        return () => {
+          unsubReq();
+          unsubMsg();
+        };
+      }, []);
+
+      // 채팅방 새 메시지 수신 시 하단 스크롤
+      useEffect(() => {
+        if (activeChatRequestId && messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [messages, activeChatRequestId]);
+
+      // 로그인 처리: 학생 계정
+      const handleStudentLogin = (e) => {
+        e.preventDefault();
+        const name = studentProfile.name.trim();
+        const sid = studentProfile.studentId.trim();
+        const phone = formatPhoneNumber(studentProfile.phone);
+
+        if (!name || !sid || phone.replace(/\D/g, '').length < 10) {
+          showToast('이름, 학번, 올바른 연락처(전화번호)를 모두 입력해 주세요.', 'amber');
+          return;
+        }
+
+        const updated = { name, studentId: sid, phone };
+        setStudentProfile(updated);
+        setSwitchStudentForm(updated);
+        setApplyForm((prev) => ({
+          ...prev,
+          studentName: name,
+          studentId: sid,
+          phone: phone
+        }));
+        setRole('student');
+        setStudentActiveTab('apply');
+        showToast(`🌿 ${name} 학생(${sid})으로 로그인되었습니다.`, 'mint');
+      };
+
+      // 로그인 처리: 위클래스 선생님 계정
+      const handleTeacherLogin = (e) => {
+        e.preventDefault();
+        const tName = teacherProfile.name.trim() || '김민지 위클래스 선생님';
+        setTeacherProfile({ name: tName });
+        setSwitchTeacherName(tName);
+        setRole('teacher');
+        showToast(`🌿 ${tName} 계정으로 접속했습니다.`, 'mint');
+      };
+
+      // 상단 바에서 역할 전환 실행
+      const handleExecuteRoleSwitch = (e) => {
+        e.preventDefault();
+        if (switchTab === 'student') {
+          const name = switchStudentForm.name.trim();
+          const sid = switchStudentForm.studentId.trim();
+          const phone = formatPhoneNumber(switchStudentForm.phone);
+          if (!name || !sid || phone.replace(/\D/g, '').length < 10) {
+            showToast('학생 이름, 학번, 연락처를 모두 입력해 주세요.', 'amber');
+            return;
+          }
+          const updated = { name, studentId: sid, phone };
+          setStudentProfile(updated);
+          setApplyForm((prev) => ({
+            ...prev,
+            studentName: name,
+            studentId: sid,
+            phone: phone
+          }));
+          setActiveChatRequestId(null);
+          setRole('student');
+          setShowRoleSwitchModal(false);
+          showToast(`🎓 학생 계정(${name} · ${sid})으로 전환했습니다.`, 'mint');
+        } else {
+          const tName = switchTeacherName.trim() || '김민지 위클래스 선생님';
+          setTeacherProfile({ name: tName });
+          setActiveChatRequestId(null);
+          setRole('teacher');
+          setShowRoleSwitchModal(false);
+          showToast(`🌿 선생님 계정(${tName})으로 전환했습니다.`, 'mint');
+        }
+      };
+
+      // 학생: 위클래스 상담 신청 제출
+      const handleSubmitCounselingRequest = async (e) => {
+        e.preventDefault();
+        if (isSubmittingRequest) return;
+
+        const studentName = applyForm.studentName.trim();
+        const studentId = applyForm.studentId.trim();
+        const phone = formatPhoneNumber(applyForm.phone);
+        const content = applyForm.content.trim();
+
+        if (!studentName || !studentId || phone.replace(/\D/g, '').length < 10) {
+          showToast('학생 이름, 학번, 연락처(필수)를 정확히 입력해 주세요.', 'amber');
+          return;
+        }
+        if (!content) {
+          showToast('상담하고 싶은 내용을 간단히라도 적어 주세요.', 'amber');
+          return;
+        }
+
+        setIsSubmittingRequest(true);
+        const now = Date.now();
+        const reqId = `wee-req-${now}-${Math.random().toString(36).slice(2, 6)}`;
+
+        const newRequest = {
+          id: reqId,
+          studentName,
+          studentId,
+          phone,
+          category: applyForm.category,
+          preferredDate: applyForm.preferredDate,
+          preferredTime: applyForm.preferredTime,
+          content,
+          status: 'PENDING', // 'PENDING' | 'ACCEPTED' | 'HOLD' | 'COMPLETED'
+          teacherName: '',
+          teacherNote: '',
+          createdAt: now,
+          updatedAt: now
+        };
+
+        try {
+          if (cloudConnected && window.__WEE_CLOUD__) {
+            await window.__WEE_CLOUD__.saveRequest(newRequest);
+          } else {
+            setRequests((prev) => [newRequest, ...prev]);
+          }
+
+          setStudentProfile({ name: studentName, studentId, phone });
+          setApplyForm((prev) => ({ ...prev, content: '' }));
+          setStudentActiveTab('list');
+          showToast('✅ 위클래스 상담 신청이 선생님께 전송되었습니다!', 'mint');
+        } catch (err) {
+          console.error("상담 신청 저장 오류:", err);
+          showToast('상담 신청 전송 중 오류가 발생했습니다. 다시 시도해 주세요.', 'rose');
+        } finally {
+          setIsSubmittingRequest(false);
+        }
+      };
+
+      // 선생님: 상담 수락하기 -> 상태 'ACCEPTED' 변경 + 환영 메시지 생성 + 즉시 1:1 대화방 오픈
+      const handleAcceptRequest = async (reqItem) => {
+        const now = Date.now();
+        const assignedTeacher = teacherProfile.name || '김민지 위클래스 선생님';
+        const updates = {
+          status: 'ACCEPTED',
+          teacherName: assignedTeacher,
+          acceptedAt: now,
+          updatedAt: now
+        };
+
+        const welcomeMsg = {
+          id: `wee-msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          requestId: reqItem.id,
+          senderRole: 'system',
+          senderName: '위클래스 안내',
+          text: `🌿 ${assignedTeacher}이(가) 상담 신청을 수락했습니다. 1:1 실시간 대화가 시작되었습니다.`,
+          timestamp: now
+        };
+
+        try {
+          if (cloudConnected && window.__WEE_CLOUD__) {
+            await window.__WEE_CLOUD__.updateRequest(reqItem.id, updates);
+            await window.__WEE_CLOUD__.saveMessage(welcomeMsg);
+          } else {
+            setRequests((prev) =>
+              prev.map((r) => (r.id === reqItem.id ? { ...r, ...updates } : r))
+            );
+            setMessages((prev) => [...prev, welcomeMsg]);
+          }
+
+          showToast(`✅ '${reqItem.studentName}' 학생의 상담을 수락하고 1:1 대화방을 열었습니다!`, 'mint');
+          setActiveChatRequestId(reqItem.id);
+        } catch (err) {
+          console.error("상담 수락 처리 오류:", err);
+          showToast('상담 수락 처리 중 오류가 발생했습니다.', 'rose');
+        }
+      };
+
+      // 선생님: 보류/일정조율 처리
+      const handleSaveHoldStatus = async (e) => {
+        e.preventDefault();
+        if (!holdNoteModalReq) return;
+        const updates = {
+          status: 'HOLD',
+          teacherName: teacherProfile.name || '김민지 위클래스 선생님',
+          teacherNote: holdNoteText.trim() || '일정 조율이 필요합니다. 연락처로 안내드리겠습니다.',
+          updatedAt: Date.now()
+        };
+
+        try {
+          if (cloudConnected && window.__WEE_CLOUD__) {
+            await window.__WEE_CLOUD__.updateRequest(holdNoteModalReq.id, updates);
+          } else {
+            setRequests((prev) =>
+              prev.map((r) => (r.id === holdNoteModalReq.id ? { ...r, ...updates } : r))
+            );
+          }
+          showToast('⏸️ 보류 및 안내 메모가 학생에게 전달되었습니다.', 'amber');
+          setHoldNoteModalReq(null);
+          setHoldNoteText('');
+        } catch (err) {
+          console.error(err);
+        }
+      };
+
+      // 선생님: 상담 완료 처리
+      const handleCompleteCounseling = async (reqItem) => {
+        const now = Date.now();
+        const updates = {
+          status: 'COMPLETED',
+          completedAt: now,
+          updatedAt: now
+        };
+        const endMsg = {
+          id: `wee-msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          requestId: reqItem.id,
+          senderRole: 'system',
+          senderName: '위클래스 안내',
+          text: `🌸 ${teacherProfile.name}이(가) 상담을 완료 처리했습니다. 언제든 다시 찾아와 주세요!`,
+          timestamp: now
+        };
+
+        try {
+          if (cloudConnected && window.__WEE_CLOUD__) {
+            await window.__WEE_CLOUD__.updateRequest(reqItem.id, updates);
+            await window.__WEE_CLOUD__.saveMessage(endMsg);
+          } else {
+            setRequests((prev) =>
+              prev.map((r) => (r.id === reqItem.id ? { ...r, ...updates } : r))
+            );
+            setMessages((prev) => [...prev, endMsg]);
+          }
+          showToast('🌸 상담이 완료 처리되었습니다.', 'mint');
+        } catch (err) {
+          console.error(err);
+        }
+      };
+
+      // 1:1 실시간 채팅 메시지 전송
+      const handleSendChatMessage = async (e, presetText = null) => {
+        if (e) e.preventDefault();
+        if (isComposingRef.current) return;
+
+        const rawText = presetText !== null ? presetText : chatInput;
+        const text = rawText.trim();
+        if (!text || !activeChatRequestId) return;
+
+        const targetReq = requests.find((r) => r.id === activeChatRequestId);
+        if (!targetReq || (targetReq.status !== 'ACCEPTED' && targetReq.status !== 'COMPLETED')) {
+          showToast('선생님이 상담을 수락한 후 1:1 대화가 가능합니다.', 'amber');
+          return;
+        }
+
+        if (presetText === null) setChatInput('');
+
+        const now = Date.now();
+        const newMsg = {
+          id: `wee-msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          requestId: activeChatRequestId,
+          senderRole: role, // 'student' | 'teacher'
+          senderName: role === 'student'
+            ? `${studentProfile.name} (${studentProfile.studentId})`
+            : teacherProfile.name,
+          text,
+          timestamp: now
+        };
+
+        try {
+          if (cloudConnected && window.__WEE_CLOUD__) {
+            await window.__WEE_CLOUD__.saveMessage(newMsg);
+          } else {
+            setMessages((prev) => [...prev, newMsg]);
+          }
+        } catch (err) {
+          console.error("메시지 전송 오류:", err);
+          showToast('메시지 전송에 실패했습니다.', 'rose');
+        }
+      };
+
+      // 테스트용 샘플 상담 신청 생성 (선생님 화면 확인용)
+      const handleCreateDemoRequest = async () => {
+        const now = Date.now();
+        const demoReq = {
+          id: `wee-req-${now}-demo`,
+          studentName: '이하윤',
+          studentId: '1학년 4반 08번',
+          phone: '010-9876-5432',
+          category: '교우관계',
+          preferredDate: getTodayDateString(),
+          preferredTime: '방과후 (16:30 ~ 17:10)',
+          content: '새 학기 반 친구들과 친해지는 과정이 조금 어렵고 혼자 있는 시간이 많아 고민입니다. 선생님과 편하게 이야기 나누고 싶어요.',
+          status: 'PENDING',
+          teacherName: '',
+          teacherNote: '',
+          createdAt: now,
+          updatedAt: now
+        };
+        try {
+          if (cloudConnected && window.__WEE_CLOUD__) {
+            await window.__WEE_CLOUD__.saveRequest(demoReq);
+          } else {
+            setRequests((prev) => [demoReq, ...prev]);
+          }
+          showToast('🌱 테스트용 학생 상담 신청이 도착했습니다!', 'mint');
+        } catch (err) {
+          console.error(err);
+        }
+      };
+
+      // 현재 활성화된 채팅방의 신청 객체 및 메시지 목록
+      const activeChatRequest = useMemo(
+        () => requests.find((r) => r.id === activeChatRequestId) || null,
+        [requests, activeChatRequestId]
+      );
+
+      const activeChatMessages = useMemo(
+        () => messages.filter((m) => m.requestId === activeChatRequestId),
+        [messages, activeChatRequestId]
+      );
+
+      // 학생 본인의 신청 내역 필터링 (학번/연락처/이름 일치 또는 전체 내역 중 본인 정보)
+      const myStudentRequests = useMemo(() => {
+        if (role !== 'student') return [];
+        return requests.filter((r) => {
+          const samePhone = r.phone && studentProfile.phone && r.phone.replace(/\D/g, '') === studentProfile.phone.replace(/\D/g, '');
+          const sameNameAndId = r.studentName === studentProfile.name && r.studentId === studentProfile.studentId;
+          return samePhone || sameNameAndId;
+        });
+      }, [requests, role, studentProfile]);
+
+      // 선생님 통계 및 필터 목록
+      const pendingRequestsCount = useMemo(
+        () => requests.filter((r) => r.status === 'PENDING').length,
+        [requests]
+      );
+      const acceptedRequestsCount = useMemo(
+        () => requests.filter((r) => r.status === 'ACCEPTED').length,
+        [requests]
+      );
+      const completedRequestsCount = useMemo(
+        () => requests.filter((r) => r.status === 'COMPLETED').length,
+        [requests]
+      );
+
+      const filteredTeacherRequests = useMemo(() => {
+        if (teacherFilter === 'ALL') return requests;
+        return requests.filter((r) => r.status === teacherFilter);
+      }, [requests, teacherFilter]);
+
+      // 상태 배지 렌더러
+      const renderStatusBadge = (status) => {
+        switch (status) {
+          case 'PENDING':
+            return (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                <Clock className="w-3.5 h-3.5" />
+                승인 대기중
+              </span>
+            );
+          case 'ACCEPTED':
+            return (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-mint-100 text-mint-800 border border-mint-200">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                수락됨 · 1:1 대화 활성
+              </span>
+            );
+          case 'HOLD':
+            return (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-800 border border-orange-200">
+                ⏸️ 보류 / 일정조율
+              </span>
+            );
+          case 'COMPLETED':
+            return (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                🌸 상담 완료
+              </span>
+            );
+          default:
+            return null;
+        }
+      };
+
+      // =========================================================================
+      // 1. 초기 로그인 및 계정 역할 선택 화면
+      // =========================================================================
+      if (role === 'none') {
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-mint-50 via-beige-100 to-beige-200 flex items-center justify-center p-4">
+            {toast && (
+              <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-mint-200" />
+                <span>{toast.text}</span>
+              </div>
+            )}
+
+            <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-beige-200 overflow-hidden">
+              {/* 상단 따뜻한 웰컴 헤더 */}
+              <div className="bg-gradient-to-br from-mint-600 to-mint-700 p-6 text-white text-center space-y-2 relative">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-mint-50 text-[11px] font-bold">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>{cloudConnected ? '실시간 클라우드 동기화 연결됨' : '세션 모드 실행중'}</span>
+                </div>
+                <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+                  <HeartHandshake className="w-8 h-8 text-white" />
+                </div>
+                <h1 className="text-2xl font-extrabold tracking-tight">위클래스(Wee Class) 마음톡</h1>
+                <p className="text-xs text-mint-100 leading-relaxed">
+                  마음이 쉬어가는 우리 학교 상담실<br />
+                  상담 신청부터 선생님 수락 후 1:1 대화까지 안전하게 연결됩니다.
+                </p>
+              </div>
+
+              <div className="p-6 space-y-5">
+                {/* 역할 선택 탭: 학생 계정 / 위클래스 선생님 계정 */}
+                <div className="grid grid-cols-2 gap-2 p-1.5 bg-beige-100 rounded-2xl border border-beige-200">
+                  <button
+                    type="button"
+                    onClick={() => setLoginTab('student')}
+                    className={`py-3 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition ${
+                      loginTab === 'student'
+                        ? 'bg-white text-mint-800 shadow-sm border border-mint-200'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <GraduationCap className="w-4 h-4 text-mint-600" />
+                    <span>학생 계정</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoginTab('teacher')}
+                    className={`py-3 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition ${
+                      loginTab === 'teacher'
+                        ? 'bg-white text-mint-800 shadow-sm border border-mint-200'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <HeartHandshake className="w-4 h-4 text-mint-600" />
+                    <span>위클래스 선생님 계정</span>
+                  </button>
+                </div>
+
+                {/* 학생 로그인 폼 */}
+                {loginTab === 'student' ? (
+                  <form onSubmit={handleStudentLogin} className="space-y-3.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-slate-700">학생 정보 입력</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setStudentProfile({
+                            name: '김하늘',
+                            studentId: '2학년 3반 15번',
+                            phone: '010-1234-5678'
+                          })
+                        }
+                        className="text-[11px] font-bold text-mint-700 bg-mint-50 hover:bg-mint-100 px-2.5 py-1 rounded-lg border border-mint-200 transition"
+                      >
+                        ✨ 예시 정보 자동입력
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">이름</label>
+                      <input
+                        type="text"
+                        value={studentProfile.name}
+                        onChange={(e) => setStudentProfile({ ...studentProfile, name: e.target.value })}
+                        placeholder="예: 김하늘"
+                        className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3.5 py-2.5 text-sm font-medium focus:outline-none focus:border-mint-600"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">학번 (학년/반/번호)</label>
+                      <input
+                        type="text"
+                        value={studentProfile.studentId}
+                        onChange={(e) => setStudentProfile({ ...studentProfile, studentId: e.target.value })}
+                        placeholder="예: 2학년 3반 15번"
+                        className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3.5 py-2.5 text-sm font-medium focus:outline-none focus:border-mint-600"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">연락처 (전화번호)</label>
+                      <input
+                        type="tel"
+                        value={studentProfile.phone}
+                        onChange={(e) =>
+                          setStudentProfile({ ...studentProfile, phone: formatPhoneNumber(e.target.value) })
+                        }
+                        placeholder="예: 010-1234-5678"
+                        className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-semibold focus:outline-none focus:border-mint-600"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 bg-mint-600 hover:bg-mint-700 text-white font-extrabold rounded-2xl text-sm shadow-md shadow-mint-600/20 transition mt-2"
+                    >
+                      🎓 학생 계정으로 시작하기
+                    </button>
+                  </form>
+                ) : (
+                  /* 위클래스 선생님 로그인 폼 */
+                  <form onSubmit={handleTeacherLogin} className="space-y-4">
+                    <div className="p-3.5 bg-mint-50 rounded-2xl border border-mint-200 text-xs text-mint-900 space-y-1 leading-relaxed">
+                      <p className="font-extrabold">🌿 위클래스 전문상담교사 전용 모드</p>
+                      <p className="text-mint-700">
+                        학생들이 보낸 상담 신청 내역과 연락처를 실시간으로 확인하고, 상담을 수락해 1:1 대화를 진행할 수 있습니다.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">위클래스 선생님 성함</label>
+                      <input
+                        type="text"
+                        value={teacherProfile.name}
+                        onChange={(e) => setTeacherProfile({ name: e.target.value })}
+                        placeholder="예: 김민지 위클래스 선생님"
+                        className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3.5 py-2.5 text-sm font-bold focus:outline-none focus:border-mint-600"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 bg-mint-700 hover:bg-mint-800 text-white font-extrabold rounded-2xl text-sm shadow-md shadow-mint-700/20 transition"
+                    >
+                      🌿 위클래스 선생님 계정으로 접속하기
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // =========================================================================
+      // 2. 로그인 이후 메인 화면 (상단 역할 전환 바 + 채팅방 / 학생 화면 / 선생님 화면)
+      // =========================================================================
+      return (
+        <div className="min-h-screen bg-beige-100 flex justify-center">
+          <div className="w-full max-w-lg bg-beige-50 min-h-screen flex flex-col shadow-xl border-x border-beige-200 relative">
+            {/* 토스트 알림 */}
+            {toast && (
+              <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 max-w-[92vw]">
+                <Sparkles className="w-4 h-4 text-mint-200 shrink-0" />
+                <span className="truncate">{toast.text}</span>
+              </div>
+            )}
+
+            {/* 상단 글로벌 헤더 & 역할 전환 바 */}
+            <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-beige-200 px-4 py-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-mint-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                  <HeartHandshake className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <h1 className="font-extrabold text-sm text-slate-900 truncate">위클래스 마음톡</h1>
+                    <span
+                      className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0 ${
+                        cloudConnected
+                          ? 'bg-mint-100 text-mint-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {cloudConnected ? '● 실시간' : '● 세션'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-bold text-mint-700 truncate">
+                    {role === 'student'
+                      ? `🎓 ${studentProfile.name} (${studentProfile.studentId})`
+                      : `🌿 ${teacherProfile.name}`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSwitchTab(role === 'student' ? 'teacher' : 'student');
+                    setShowRoleSwitchModal(true);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-mint-50 hover:bg-mint-100 text-mint-800 border border-mint-200 text-xs font-extrabold flex items-center gap-1 transition shadow-sm"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-mint-600" />
+                  <span>{role === 'student' ? '선생님 전환' : '학생 전환'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveChatRequestId(null);
+                    setRole('none');
+                  }}
+                  title="초기 로그인 화면으로"
+                  className="p-2 rounded-xl bg-beige-100 hover:bg-beige-200 text-slate-600 text-xs font-bold transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </header>
+
+            {/* =================================================================
+                A. 1:1 실시간 상담 대화방 (수락된 신청 건 입장 시)
+               ================================================================= */}
+            {activeChatRequest ? (
+              <div className="flex-1 flex flex-col bg-beige-50">
+                {/* 채팅방 상단 상대방 정보 바 */}
+                <div className="bg-white border-b border-beige-200 px-4 py-3 flex items-center justify-between gap-2 shadow-sm">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setActiveChatRequestId(null)}
+                      className="p-2 rounded-xl bg-beige-100 hover:bg-beige-200 text-slate-700 transition shrink-0"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-mint-100 text-mint-800">
+                          {activeChatRequest.category}
+                        </span>
+                        <span className="text-[11px] font-bold text-slate-400">
+                          {activeChatRequest.preferredDate} · {activeChatRequest.preferredTime}
+                        </span>
+                      </div>
+                      {role === 'student' ? (
+                        <h2 className="font-extrabold text-sm text-slate-900 truncate mt-0.5">
+                          🌿 {activeChatRequest.teacherName || teacherProfile.name}
+                        </h2>
+                      ) : (
+                        <div className="mt-0.5">
+                          <h2 className="font-extrabold text-sm text-slate-900 truncate">
+                            🎓 {activeChatRequest.studentName} ({activeChatRequest.studentId})
+                          </h2>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <a
+                              href={`tel:${activeChatRequest.phone}`}
+                              className="inline-flex items-center gap-1 text-[11px] font-mono font-extrabold text-mint-700 hover:underline"
+                            >
+                              <Phone className="w-3 h-3" />
+                              <span>{activeChatRequest.phone}</span>
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                copyTextFallback(activeChatRequest.phone);
+                                showToast(`📋 연락처(${activeChatRequest.phone})가 복사되었습니다.`);
+                              }}
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-beige-100 text-slate-600 hover:bg-beige-200"
+                            >
+                              복사
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {role === 'teacher' && activeChatRequest.status === 'ACCEPTED' && (
+                    <button
+                      type="button"
+                      onClick={() => handleCompleteCounseling(activeChatRequest)}
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[11px] font-extrabold shrink-0 transition"
+                    >
+                      상담 완료
+                    </button>
+                  )}
+                </div>
+
+                {/* 신청 원문 요약 접이식 배너 */}
+                <div className="bg-mint-50/80 border-b border-mint-100 px-4 py-2.5 text-xs text-mint-900">
+                  <p className="font-bold text-[11px] text-mint-700">📝 신청 상담 내용</p>
+                  <p className="text-slate-700 mt-0.5 leading-relaxed">{activeChatRequest.content}</p>
+                </div>
+
+                {/* 메시지 말풍선 리스트 */}
+                <div className="flex-1 p-4 space-y-3 overflow-y-auto ios-scroll">
+                  {activeChatMessages.map((msg) => {
+                    if (msg.senderRole === 'system') {
+                      return (
+                        <div key={msg.id} className="text-center my-2">
+                          <span className="inline-block px-3.5 py-1.5 rounded-full bg-beige-200/80 text-slate-700 text-[11px] font-bold">
+                            {msg.text}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    const isMine = msg.senderRole === role;
+                    const timeLabel = new Date(msg.timestamp || Date.now()).toLocaleTimeString('ko-KR', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    });
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
+                      >
+                        {!isMine && (
+                          <span className="text-[11px] font-bold text-slate-500 mb-1 px-1">
+                            {msg.senderName}
+                          </span>
+                        )}
+                        <div className={`flex items-end gap-1.5 max-w-[82%] ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
+                          <div
+                            className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm whitespace-pre-wrap break-words ${
+                              isMine
+                                ? 'bg-mint-600 text-white rounded-tr-sm'
+                                : 'bg-white text-slate-800 border border-beige-200 rounded-tl-sm'
+                            }`}
+                          >
+                            {msg.text}
+                          </div>
+                          <span className="text-[10px] text-slate-400 shrink-0 pb-0.5">
+                            {timeLabel}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* 빠른 인사/응답 칩 + 메시지 입력창 */}
+                <div className="bg-white border-t border-beige-200 p-3 space-y-2">
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 ios-scroll">
+                    {(role === 'student' ? STUDENT_QUICK_REPLIES : TEACHER_QUICK_REPLIES).map((sample, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSendChatMessage(null, sample)}
+                        className="px-2.5 py-1.5 rounded-full bg-beige-100 hover:bg-mint-50 text-slate-700 hover:text-mint-800 border border-beige-200 text-[11px] font-bold whitespace-nowrap transition shrink-0"
+                      >
+                        {sample}
+                      </button>
+                    ))}
+                  </div>
+
+                  <form onSubmit={(e) => handleSendChatMessage(e)} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onCompositionStart={() => { isComposingRef.current = true; }}
+                      onCompositionEnd={() => { isComposingRef.current = false; }}
+                      placeholder="따뜻하고 편한 마음으로 메시지를 입력해 주세요..."
+                      className="flex-1 bg-beige-50 border border-beige-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-mint-600"
+                    />
+                    <button
+                      type="submit"
+                      className="p-3 rounded-2xl bg-mint-600 hover:bg-mint-700 text-white shadow-sm transition shrink-0"
+                    >
+                      <Send className="w-5 h-5" />
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ) : role === 'student' ? (
+              /* ===============================================================
+                  B. 학생용 화면 (위클래스 상담 신청 & 내 신청 내역 확인)
+                 =============================================================== */
+              <div className="flex-1 p-4 space-y-4 overflow-y-auto ios-scroll">
+                {/* 심리적 안정감을 주는 웰컴 카드 */}
+                <div className="bg-gradient-to-br from-mint-600 to-mint-700 rounded-3xl p-5 text-white shadow-md space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-extrabold bg-white/20 px-2.5 py-1 rounded-full">
+                      🔒 비밀 보장 · 1:1 교내 상담
+                    </span>
+                    <HeartHandshake className="w-5 h-5 text-mint-200" />
+                  </div>
+                  <h2 className="text-lg font-extrabold tracking-tight">
+                    혼자 고민하지 말고 편하게 이야기해요
+                  </h2>
+                  <p className="text-xs text-mint-100 leading-relaxed">
+                    상담을 신청하면 위클래스 선생님께 연락처와 내용이 전달되며, 선생님이 수락하시면 바로 1:1 대화를 시작할 수 있습니다.
+                  </p>
+                </div>
+
+                {/* 학생 탭 전환: 상담 신청하기 / 내 상담 신청 내역 */}
+                <div className="grid grid-cols-2 gap-2 p-1.5 bg-beige-200/70 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setStudentActiveTab('apply')}
+                    className={`py-2.5 rounded-xl text-xs font-extrabold transition ${
+                      studentActiveTab === 'apply'
+                        ? 'bg-white text-mint-800 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    📝 위클래스 상담 신청
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStudentActiveTab('list')}
+                    className={`py-2.5 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 ${
+                      studentActiveTab === 'list'
+                        ? 'bg-white text-mint-800 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span>📋 내 신청 내역</span>
+                    {myStudentRequests.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-mint-600 text-white font-black">
+                        {myStudentRequests.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {/* 탭 1: 상담 신청 폼 */}
+                {studentActiveTab === 'apply' && (
+                  <form onSubmit={handleSubmitCounselingRequest} className="bg-white rounded-3xl p-5 border border-beige-200 shadow-sm space-y-4">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">학생 이름 *</label>
+                        <input
+                          type="text"
+                          value={applyForm.studentName}
+                          onChange={(e) => setApplyForm({ ...applyForm, studentName: e.target.value })}
+                          placeholder="이름 입력"
+                          className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-mint-600"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">학번 *</label>
+                        <input
+                          type="text"
+                          value={applyForm.studentId}
+                          onChange={(e) => setApplyForm({ ...applyForm, studentId: e.target.value })}
+                          placeholder="예: 2학년 3반 15번"
+                          className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-mint-600"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                        연락처 (전화번호 필수) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="tel"
+                          value={applyForm.phone}
+                          onChange={(e) =>
+                            setApplyForm({ ...applyForm, phone: formatPhoneNumber(e.target.value) })
+                          }
+                          placeholder="010-0000-0000 (선생님 연락 및 일정 안내용)"
+                          className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold focus:outline-none focus:border-mint-600"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1.5">상담 분야 선택 *</label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {COUNSELING_CATEGORIES.map((cat) => {
+                          const selected = applyForm.category === cat.id;
+                          return (
+                            <button
+                              key={cat.id}
+                              type="button"
+                              onClick={() => setApplyForm({ ...applyForm, category: cat.id })}
+                              className={`py-2 px-2 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1 transition ${
+                                selected
+                                  ? 'bg-mint-600 text-white border-mint-600 shadow-sm'
+                                  : 'bg-beige-50 text-slate-700 border-beige-200 hover:border-mint-400'
+                              }`}
+                            >
+                              <span>{cat.emoji}</span>
+                              <span>{cat.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">희망 상담 날짜 *</label>
+                        <input
+                          type="date"
+                          value={applyForm.preferredDate}
+                          onChange={(e) => setApplyForm({ ...applyForm, preferredDate: e.target.value })}
+                          className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-mint-600"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">희망 시간대 *</label>
+                        <select
+                          value={applyForm.preferredTime}
+                          onChange={(e) => setApplyForm({ ...applyForm, preferredTime: e.target.value })}
+                          className="w-full bg-beige-50 border border-beige-200 rounded-xl px-2.5 py-2.5 text-xs font-bold focus:outline-none focus:border-mint-600"
+                        >
+                          <option value="아침 시간 (08:10 ~ 08:40)">아침 시간 (08:10~08:40)</option>
+                          <option value="점심시간 (12:40 ~ 13:20)">점심시간 (12:40~13:20)</option>
+                          <option value="쉬는 시간 (10분 단기)">쉬는 시간 (10분 단기)</option>
+                          <option value="방과후 (16:30 ~ 17:10)">방과후 (16:30~17:10)</option>
+                          <option value="온라인 1:1 채팅 희망">온라인 1:1 채팅 희망</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1">상담하고 싶은 내용 *</label>
+                      <textarea
+                        rows="4"
+                        value={applyForm.content}
+                        onChange={(e) => setApplyForm({ ...applyForm, content: e.target.value })}
+                        placeholder="요즘 고민되는 일이나 선생님께 미리 전하고 싶은 이야기를 편하게 작성해 주세요."
+                        className="w-full bg-beige-50 border border-beige-200 rounded-2xl p-3 text-xs leading-relaxed focus:outline-none focus:border-mint-600"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isSubmittingRequest}
+                      className="w-full py-3.5 bg-mint-600 hover:bg-mint-700 text-white font-extrabold rounded-2xl text-sm shadow-md shadow-mint-600/20 transition"
+                    >
+                      {isSubmittingRequest ? '전송 중...' : '🌿 위클래스 상담 신청하기'}
+                    </button>
+                  </form>
+                )}
+
+                {/* 탭 2: 학생의 내 상담 신청 목록 & 수락 시 1:1 대화 입장 */}
+                {studentActiveTab === 'list' && (
+                  <div className="space-y-3">
+                    {myStudentRequests.length === 0 ? (
+                      <div className="bg-white rounded-3xl p-8 border border-beige-200 text-center space-y-2.5">
+                        <p className="text-sm font-extrabold text-slate-800">아직 신청한 상담 내역이 없습니다</p>
+                        <p className="text-xs text-slate-500">
+                          상단 '위클래스 상담 신청' 탭에서 첫 상담을 신청해 보세요.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setStudentActiveTab('apply')}
+                          className="mt-2 px-4 py-2.5 bg-mint-600 text-white text-xs font-extrabold rounded-xl"
+                        >
+                          상담 신청하러 가기
+                        </button>
+                      </div>
+                    ) : (
+                      myStudentRequests.map((req) => {
+                        const msgCount = messages.filter((m) => m.requestId === req.id && m.senderRole !== 'system').length;
+                        const isAccepted = req.status === 'ACCEPTED';
+                        const isCompleted = req.status === 'COMPLETED';
+
+                        return (
+                          <div
+                            key={req.id}
+                            className={`bg-white rounded-3xl p-4 border shadow-sm space-y-3 ${
+                              isAccepted ? 'border-mint-500 ring-2 ring-mint-500/15' : 'border-beige-200'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="px-2.5 py-1 rounded-lg bg-beige-100 text-slate-800 text-xs font-extrabold">
+                                {req.category}
+                              </span>
+                              {renderStatusBadge(req.status)}
+                            </div>
+
+                            <div className="text-xs text-slate-600 space-y-1 bg-beige-50 p-3 rounded-2xl border border-beige-200/70">
+                              <p className="font-bold text-slate-800">
+                                📅 희망 일시: {req.preferredDate} · {req.preferredTime}
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                📞 전달된 내 연락처: <span className="font-mono font-bold text-slate-700">{req.phone}</span>
+                              </p>
+                              <p className="text-slate-700 pt-1 leading-relaxed">"{req.content}"</p>
+                            </div>
+
+                            {req.status === 'PENDING' && (
+                              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 flex items-center gap-2 text-xs text-amber-900 font-bold">
+                                <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                                <span>선생님 확인 및 수락 대기중입니다. 수락되면 1:1 대화가 즉시 열립니다.</span>
+                              </div>
+                            )}
+
+                            {req.status === 'HOLD' && (
+                              <div className="p-3 rounded-2xl bg-orange-50 border border-orange-200 text-xs text-orange-900 space-y-1">
+                                <p className="font-extrabold">⏸️ 선생님 안내 메모 ({req.teacherName})</p>
+                                <p>{req.teacherNote}</p>
+                              </div>
+                            )}
+
+                            {(isAccepted || isCompleted) && (
+                              <button
+                                type="button"
+                                onClick={() => setActiveChatRequestId(req.id)}
+                                className="w-full py-3 bg-mint-600 hover:bg-mint-700 text-white font-extrabold rounded-2xl text-xs shadow-sm flex items-center justify-center gap-2 transition"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>
+                                  {isAccepted
+                                    ? `1:1 상담 대화 입장 (${req.teacherName || '위클래스 선생님'})`
+                                    : '완료된 1:1 상담 대화 기록 보기'}
+                                </span>
+                                {msgCount > 0 && (
+                                  <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-black">
+                                    대화 {msgCount}
+                                  </span>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* ===============================================================
+                  C. 위클래스 선생님 전용 대시보드 (신청 수신 · 연락처 확인 · 수락)
+                 =============================================================== */
+              <div className="flex-1 p-4 space-y-4 overflow-y-auto ios-scroll">
+                {/* 선생님 현황 요약 카드 */}
+                <div className="bg-gradient-to-br from-mint-700 to-mint-800 rounded-3xl p-5 text-white shadow-md space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold text-mint-200">위클래스 상담 관리 센터</p>
+                      <h2 className="text-lg font-extrabold mt-0.5">{teacherProfile.name}</h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCreateDemoRequest}
+                      className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-extrabold transition"
+                    >
+                      + 샘플 신청 테스트
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 pt-1">
+                    <div className="bg-white/15 rounded-2xl p-2.5 text-center">
+                      <p className="text-[11px] text-mint-100 font-bold">미확인 대기</p>
+                      <p className="text-xl font-black text-amber-300 mt-0.5">{pendingRequestsCount}건</p>
+                    </div>
+                    <div className="bg-white/15 rounded-2xl p-2.5 text-center">
+                      <p className="text-[11px] text-mint-100 font-bold">수락 · 대화중</p>
+                      <p className="text-xl font-black text-white mt-0.5">{acceptedRequestsCount}건</p>
+                    </div>
+                    <div className="bg-white/15 rounded-2xl p-2.5 text-center">
+                      <p className="text-[11px] text-mint-100 font-bold">상담 완료</p>
+                      <p className="text-xl font-black text-mint-200 mt-0.5">{completedRequestsCount}건</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 상태 필터 바 */}
+                <div className="flex gap-1.5 overflow-x-auto pb-1 ios-scroll">
+                  {[
+                    { id: 'ALL', label: `전체 (${requests.length})` },
+                    { id: 'PENDING', label: `⏳ 승인 대기중 (${pendingRequestsCount})` },
+                    { id: 'ACCEPTED', label: `💬 수락됨 (${acceptedRequestsCount})` },
+                    { id: 'COMPLETED', label: `🌸 완료 (${completedRequestsCount})` }
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setTeacherFilter(tab.id)}
+                      className={`px-3 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                        teacherFilter === tab.id
+                          ? 'bg-mint-700 text-white shadow-sm'
+                          : 'bg-white text-slate-600 border border-beige-200 hover:border-mint-400'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 신청 수신 목록 */}
+                {filteredTeacherRequests.length === 0 ? (
+                  <div className="bg-white rounded-3xl p-8 border border-beige-200 text-center space-y-2">
+                    <p className="text-sm font-extrabold text-slate-800">해당 상태의 상담 신청이 없습니다</p>
+                    <p className="text-xs text-slate-500">
+                      학생 계정에서 상담을 신청하면 이곳에 연락처와 신청 내역이 실시간으로 표시됩니다.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredTeacherRequests.map((req) => {
+                      const msgCount = messages.filter((m) => m.requestId === req.id && m.senderRole !== 'system').length;
+                      const createdTime = new Date(req.createdAt || Date.now()).toLocaleString('ko-KR', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      });
+
+                      return (
+                        <div
+                          key={req.id}
+                          className={`bg-white rounded-3xl p-4 border shadow-sm space-y-3 ${
+                            req.status === 'PENDING'
+                              ? 'border-amber-300 ring-2 ring-amber-200/50'
+                              : req.status === 'ACCEPTED'
+                              ? 'border-mint-400'
+                              : 'border-beige-200'
+                          }`}
+                        >
+                          {/* 상단: 학생 이름/학번 + 상태 배지 */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <h3 className="font-extrabold text-base text-slate-900">
+                                  {req.studentName}
+                                </h3>
+                                <span className="text-xs font-bold px-2 py-0.5 rounded-lg bg-beige-100 text-slate-700">
+                                  {req.studentId}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-400 mt-0.5">신청 접수: {createdTime}</p>
+                            </div>
+                            {renderStatusBadge(req.status)}
+                          </div>
+
+                          {/* 학생 연락처 강조 카드 (전화/문자/복사) */}
+                          <div className="p-3 rounded-2xl bg-mint-50 border border-mint-200 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-8 h-8 rounded-xl bg-mint-600 text-white flex items-center justify-center shrink-0">
+                                <Phone className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-extrabold text-mint-800">학생 연락처 (즉시 연락 가능)</p>
+                                <p className="text-sm font-mono font-black text-slate-900 truncate">{req.phone}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <a
+                                href={`tel:${req.phone}`}
+                                className="px-2.5 py-1.5 rounded-xl bg-mint-600 hover:bg-mint-700 text-white text-[11px] font-extrabold transition"
+                              >
+                                전화
+                              </a>
+                              <a
+                                href={`sms:${req.phone}`}
+                                className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-beige-100 text-mint-800 border border-mint-200 text-[11px] font-extrabold transition"
+                              >
+                                문자
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  copyTextFallback(req.phone);
+                                  showToast(`📋 ${req.studentName} 학생 연락처(${req.phone}) 복사 완료!`);
+                                }}
+                                className="p-1.5 rounded-xl bg-white hover:bg-beige-100 text-slate-600 border border-beige-200 transition"
+                                title="연락처 복사"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 상담 분야, 희망 일시, 상담 내용 */}
+                          <div className="p-3 rounded-2xl bg-beige-50 border border-beige-200/80 space-y-1.5 text-xs">
+                            <div className="flex items-center justify-between flex-wrap gap-1">
+                              <span className="font-extrabold text-mint-800">분야: {req.category}</span>
+                              <span className="font-bold text-slate-600 flex items-center gap-1">
+                                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                                {req.preferredDate} · {req.preferredTime}
+                              </span>
+                            </div>
+                            <p className="text-slate-800 leading-relaxed pt-1 border-t border-beige-200/70">
+                              {req.content}
+                            </p>
+                          </div>
+
+                          {/* 선생님 액션 버튼 영역 */}
+                          {req.status === 'PENDING' && (
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleAcceptRequest(req)}
+                                className="flex-1 py-3 bg-mint-600 hover:bg-mint-700 text-white font-extrabold rounded-2xl text-xs shadow-sm transition flex items-center justify-center gap-1.5"
+                              >
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>상담 수락하기 (1:1 대화 열기)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setHoldNoteModalReq(req);
+                                  setHoldNoteText('');
+                                }}
+                                className="px-3.5 py-3 bg-beige-100 hover:bg-beige-200 text-slate-700 font-extrabold rounded-2xl text-xs transition"
+                              >
+                                보류/조율
+                              </button>
+                            </div>
+                          )}
+
+                          {req.status === 'HOLD' && (
+                            <div className="space-y-2">
+                              <p className="text-[11px] text-orange-800 bg-orange-50 px-3 py-2 rounded-xl border border-orange-200">
+                                ⏸️ 보류 메모: {req.teacherNote}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => handleAcceptRequest(req)}
+                                className="w-full py-2.5 bg-mint-600 hover:bg-mint-700 text-white font-extrabold rounded-2xl text-xs transition"
+                              >
+                                ✅ 지금 상담 수락하기
+                              </button>
+                            </div>
+                          )}
+
+                          {(req.status === 'ACCEPTED' || req.status === 'COMPLETED') && (
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setActiveChatRequestId(req.id)}
+                                className="flex-1 py-3 bg-mint-700 hover:bg-mint-800 text-white font-extrabold rounded-2xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>1:1 상담 대화 입장</span>
+                                {msgCount > 0 && (
+                                  <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-black">
+                                    {msgCount}
+                                  </span>
+                                )}
+                              </button>
+                              {req.status === 'ACCEPTED' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCompleteCounseling(req)}
+                                  className="px-3.5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-2xl text-xs transition"
+                                >
+                                  완료 처리
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* =================================================================
+                모달 1: 상단 바 빠른 역할 전환 모달 (학생 ↔ 위클래스 선생님)
+               ================================================================= */}
+            {showRoleSwitchModal && (
+              <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-beige-200">
+                  <div className="flex items-center justify-between border-b border-beige-200 pb-3">
+                    <h3 className="font-extrabold text-sm text-slate-900">계정 역할 빠른 전환</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowRoleSwitchModal(false)}
+                      className="p-1 text-slate-400 hover:text-slate-700"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-beige-100 rounded-2xl">
+                    <button
+                      type="button"
+                      onClick={() => setSwitchTab('student')}
+                      className={`py-2.5 rounded-xl text-xs font-extrabold transition ${
+                        switchTab === 'student'
+                          ? 'bg-white text-mint-800 shadow-sm'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      🎓 학생 계정
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSwitchTab('teacher')}
+                      className={`py-2.5 rounded-xl text-xs font-extrabold transition ${
+                        switchTab === 'teacher'
+                          ? 'bg-white text-mint-800 shadow-sm'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      🌿 위클래스 선생님
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleExecuteRoleSwitch} className="space-y-3">
+                    {switchTab === 'student' ? (
+                      <>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 mb-1">학생 이름</label>
+                          <input
+                            type="text"
+                            value={switchStudentForm.name}
+                            onChange={(e) => setSwitchStudentForm({ ...switchStudentForm, name: e.target.value })}
+                            className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3 py-2 text-xs font-bold"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 mb-1">학번</label>
+                          <input
+                            type="text"
+                            value={switchStudentForm.studentId}
+                            onChange={(e) => setSwitchStudentForm({ ...switchStudentForm, studentId: e.target.value })}
+                            className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3 py-2 text-xs font-bold"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 mb-1">연락처</label>
+                          <input
+                            type="tel"
+                            value={switchStudentForm.phone}
+                            onChange={(e) =>
+                              setSwitchStudentForm({ ...switchStudentForm, phone: formatPhoneNumber(e.target.value) })
+                            }
+                            className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3 py-2 text-xs font-mono font-bold"
+                            required
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">위클래스 선생님 성함</label>
+                        <input
+                          type="text"
+                          value={switchTeacherName}
+                          onChange={(e) => setSwitchTeacherName(e.target.value)}
+                          className="w-full bg-beige-50 border border-beige-200 rounded-xl px-3 py-2.5 text-xs font-bold"
+                          required
+                        />
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      className="w-full py-3 bg-mint-600 hover:bg-mint-700 text-white font-extrabold rounded-2xl text-xs shadow transition"
+                    >
+                      선택한 역할로 즉시 전환하기
+                    </button>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* =================================================================
+                모달 2: 선생님 보류/일정조율 메모 모달
+               ================================================================= */}
+            {holdNoteModalReq && (
+              <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                <form
+                  onSubmit={handleSaveHoldStatus}
+                  className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-beige-200"
+                >
+                  <div className="flex items-center justify-between border-b border-beige-200 pb-3">
+                    <h3 className="font-extrabold text-sm text-slate-900">
+                      ⏸️ 상담 보류 및 일정 조율 안내
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setHoldNoteModalReq(null)}
+                      className="p-1 text-slate-400"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-600">
+                    <b>{holdNoteModalReq.studentName} ({holdNoteModalReq.studentId})</b> 학생에게 전달할 일정 안내 메시지를 입력하세요.
+                  </p>
+
+                  <textarea
+                    rows="3"
+                    value={holdNoteText}
+                    onChange={(e) => setHoldNoteText(e.target.value)}
+                    placeholder="예: 해당 시간에는 외부 출장이 있어 내일 점심시간(12:40)에 진행할게요!"
+                    className="w-full bg-beige-50 border border-beige-200 rounded-2xl p-3 text-xs focus:outline-none focus:border-mint-600"
+                    required
+                  />
+
+                  <button
+                    type="submit"
+                    className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-2xl text-xs shadow transition"
+                  >
+                    안내 메모 저장 및 전송
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
